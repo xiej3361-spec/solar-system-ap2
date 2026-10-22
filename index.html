@@ -10,7 +10,7 @@
 <body>
 <header>
   <h1>AP2 · 三维层级场景：太阳系</h1>
-  <p class="sub">齐次坐标 · 层级模型矩阵 · 透视 / 正交 · 虚拟轨迹球</p>
+  <p class="sub">齐次坐标 · 层级模型矩阵 · 透视 / 正交 · 偏航俯仰视角 · WASD 自由飞行</p>
 </header>
 
 <div class="layout">
@@ -19,11 +19,36 @@
     <div class="vignette" aria-hidden="true"></div>
     <div class="grain" aria-hidden="true"></div>
     <div id="labels" aria-hidden="true"></div>
+    <div id="ground-wrap" hidden>
+      <canvas id="ground" width="320" height="200"></canvas>
+      <div class="ground-cap">地面观测视角 · 教学示意</div>
+    </div>
+    <div id="eclipse-hud" hidden>
+      <span class="hud-title" id="eclipse-title">日食演示</span>
+      <span class="hud-line" id="eclipse-line"></span>
+    </div>
   </div>
 
   <form id="controls" autocomplete="off">
     <fieldset>
-      <legend>运动参数</legend>
+      <legend>时间与天文模式</legend>
+      <div class="seg" role="group" aria-label="模拟模式">
+        <button type="button" id="mode-real" aria-pressed="true">真实天文</button>
+        <button type="button" id="mode-demo" aria-pressed="false">自定义演示</button>
+      </div>
+      <div class="row">
+        <label for="simDate">模拟时刻（UTC）</label>
+        <input type="datetime-local" id="simDate" name="simDate" step="60">
+      </div>
+      <div class="row">
+        <label for="timeRate">时间倍率 <span data-for="timeRate"></span></label>
+        <input type="range" id="timeRate" name="timeRate" min="0" max="5" step="0.01" value="3.5">
+      </div>
+      <p class="hint" id="astro-info">直射点：—</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>运动参数（自定义演示模式）</legend>
       <div class="row">
         <label for="orbitSpeed">公转速度 <span data-for="orbitSpeed"></span></label>
         <input type="range" id="orbitSpeed" name="orbitSpeed" min="0" max="8" step="0.05" value="1">
@@ -51,20 +76,32 @@
         <button type="button" id="btn-proj">切换投影 <kbd>O</kbd></button>
       </div>
       <p class="hint">
-        左键拖拽：虚拟轨迹球接管视角。<br>
-        滚轮：缩放。拖拽与漫游可互相接管。<br>
-        <b>单击天体（或其名称）</b>：相机平滑飞近聚焦；<br>
-        单击空白处：回到全景视角。
+        左键拖拽：水平 = 环绕，垂直 = 俯仰（向下拖 = 抬高视角，方向恒定）。<br>
+        <b>W / A / S / D</b>：沿当前视线自由飞行，<kbd>Shift</kbd> 加速。<br>
+        滚轮：以当前观察目标为中心缩放。<br>
+        <b>单击天体（或其名称）</b>：平滑聚焦；单击空白：回到全景。
       </p>
     </fieldset>
 
     <fieldset>
-      <legend>选做 · 日食 / 月食</legend>
+      <legend>日食 / 月食演示</legend>
       <div class="buttons">
-        <button type="button" id="btn-solar">日食视点</button>
-        <button type="button" id="btn-lunar">月食视点</button>
+        <button type="button" id="btn-solar">日食演示</button>
+        <button type="button" id="btn-lunar">月食演示</button>
       </div>
-      <p class="hint">自动对齐日–地–月并切到对应视点；视点内时间冻结、相机跟随天体，可清楚观察遮挡与本影变暗。拖拽或按 C 恢复。</p>
+      <div class="buttons" style="margin-top:8px">
+        <button type="button" id="btn-eclipse-space" aria-pressed="true">空间视角</button>
+        <button type="button" id="btn-eclipse-ground" aria-pressed="false">地面视角</button>
+      </div>
+      <p class="hint">
+        进入后冻结全部运动；拖动 / WASD 仅移动相机。<br>
+        观察：本影（深）× 半影（淡）与地表阴影范围。<br>
+        地面视角展示太阳/月亮圆盘的遮挡形态（按真实角尺寸计算）。<br>
+        <b>退出演示</b>：按 <kbd>Esc</kbd> 或点「返回太阳系」。
+      </p>
+      <div class="buttons" style="margin-top:8px">
+        <button type="button" id="btn-exit-eclipse">返回太阳系</button>
+      </div>
     </fieldset>
 
     <p id="status">正在加载纹理…</p>
@@ -113,32 +150,114 @@ uniform float uUseTexture;
 uniform float uAlphaFromLuma;
 uniform float uAlpha;
 uniform float uGlow;
+uniform float uTime;
+uniform float uSunMode;
+uniform float uCorona;
+uniform float uCoronaDisk;
+uniform float uShadowMode;
+uniform vec3 uShadowSpot;
+uniform vec3 uShadowDir;
+uniform vec3 uShadowAxisPoint;
+uniform float uShadowR;
+uniform float uShadowPR;
 
 out vec4 fragColor;
 
+// —— 3D 值噪声 / fBm：太阳表面颗粒与日冕丝状结构 ——
+float hash(vec3 p) {
+  p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float vnoise(vec3 x) {
+  vec3 i = floor(x);
+  vec3 f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float n000 = hash(i);
+  float n100 = hash(i + vec3(1.0, 0.0, 0.0));
+  float n010 = hash(i + vec3(0.0, 1.0, 0.0));
+  float n110 = hash(i + vec3(1.0, 1.0, 0.0));
+  float n001 = hash(i + vec3(0.0, 0.0, 1.0));
+  float n101 = hash(i + vec3(1.0, 0.0, 1.0));
+  float n011 = hash(i + vec3(0.0, 1.0, 1.0));
+  float n111 = hash(i + vec3(1.0, 1.0, 1.0));
+  return mix(
+    mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+    mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
+    f.z);
+}
+float fbm3(vec3 p) {
+  float s = 0.0;
+  float a = 0.5;
+  for (int i = 0; i < 3; i++) {
+    s += a * vnoise(p);
+    p *= 2.03;
+    a *= 0.5;
+  }
+  return s / 0.875;
+}
+
 void main() {
+  // 阴影贴图通道：只输出灰度，main.js 用 DST_COLOR/ZERO 乘色压暗
+  if (uShadowMode > 0.5) {
+    float d;
+    if (uShadowMode < 1.5) {
+      d = distance(vWorld, uShadowSpot);          // 月影落在地球表面的阴影斑
+    } else {
+      vec3 w = vWorld - uShadowAxisPoint;          // 地影轴线扫过月球
+      float t = dot(w, uShadowDir);
+      d = length(w - t * uShadowDir);
+    }
+    float dark;
+    if (d < uShadowR) dark = 0.06;
+    else if (d < uShadowPR) dark = mix(0.06, 0.92, smoothstep(uShadowR, uShadowPR, d));
+    else dark = 1.0;
+    fragColor = vec4(vec3(dark), 1.0);
+    return;
+  }
+
+  // 日冕：面向相机的 billboard，连续衰减 + 丝状噪声（无分层圆环）
+  if (uCorona > 0.5) {
+    vec2 p = (vUv - 0.5) * 2.0;
+    float r = length(p);
+    float ang = atan(p.y, p.x);
+    float core = exp(-pow(r * 2.9, 1.55));
+    float streams = 0.55 + 0.65 * fbm3(vec3(cos(ang) * 1.6, sin(ang) * 1.6, r * 2.4 + uTime * 0.02));
+    float edge = 1.0 - smoothstep(0.86, 1.0, r);
+    // 中心日面区域由太阳本体负责；日冕在日面外侧达到满强度后随 core 单调衰减
+    float mask = smoothstep(uCoronaDisk * 0.75, uCoronaDisk * 0.99, r);
+    float glow = core * streams * edge * mask;
+    fragColor = vec4(uTint * glow * 1.7, clamp(glow * 1.6, 0.0, 1.0));
+    return;
+  }
+
   vec4 tex = texture(uSampler, vUv);
   vec3 base = mix(uTint, tex.rgb, uUseTexture);
+  vec3 N = normalize(vN);
+  vec3 V = normalize(uCamPos - vWorld);
   vec3 color;
+
   if (uEmissive > 0.5) {
-    color = base;
-    if (uGlow > 0.5) {
-      // 边缘光（rim）：法线越垂直视线越亮，用于太阳光晕与聚焦高亮环
-      vec3 V = normalize(uCamPos - vWorld);
-      float rim = 1.0 - abs(dot(normalize(vN), V));
-      color = base * rim * rim;
+    if (uSunMode > 0.5) {
+      // 太阳表面：轻微临边昏暗 + 时间演化的细颗粒噪声 + 极薄的边缘过渡
+      float mu = clamp(dot(N, V), 0.0, 1.0);
+      float gran = 0.86 + 0.24 * fbm3(vWorld * 11.0 + vec3(0.0, 0.0, uTime * 0.015));
+      float limb = 0.86 + 0.14 * pow(mu, 0.6);
+      color = base * gran * limb * 1.32;
+      color += uTint * pow(1.0 - mu, 5.0) * 0.08;
+    } else {
+      color = base;
     }
   } else {
     vec3 L = normalize(uLightPos - vWorld);
-    vec3 N = normalize(vN);
     float diff = max(dot(N, L), 0.0);
     color = base * (uAmbient + diff);
     if (uGlow > 0.5) {
-      vec3 V = normalize(uCamPos - vWorld);
-      float rim = 1.0 - abs(dot(normalize(vN), V));
-      color += uTint * rim * rim * 1.4; // 选中 / 悬停天体的边缘描光
+      float rim = 1.0 - abs(dot(N, V));
+      color += uTint * rim * rim * 1.4;
     }
   }
+
   color *= (1.0 - 0.85 * uShadow);
   float alpha = uAlpha;
   if (uAlphaFromLuma > 0.5) {

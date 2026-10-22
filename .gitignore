@@ -11,3 +11,5 @@ tools/rea-skill-staging/
 tools/asar-listing.txt
 tools/asar-list.mjs.cjs
 tools/asar-extract.mjs.cjs
+tools/asar-extract.mjs.cjs
+tools/probe-drag.mjs

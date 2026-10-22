@@ -131,3 +131,54 @@ export function createAsteroids(count, inner, outer, minR, maxR, seed = 7) {
   }
   return items;
 }
+
+/**
+ * 面向相机的单位四边形（-1..1，UV 0..1），用于太阳日冕 billboard。
+ * 模型矩阵由 main.js 按相机基向量构造（billboard）。
+ */
+export function createQuad() {
+  return {
+    positions: new Float32Array([
+      -1, -1, 0,
+      1, -1, 0,
+      1, 1, 0,
+      -1, 1, 0,
+    ]),
+    normals: new Float32Array([
+      0, 0, 1,
+      0, 0, 1,
+      0, 0, 1,
+      0, 0, 1,
+    ]),
+    uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+    indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
+    count: 6,
+    mode: "triangles",
+  };
+}
+
+/**
+ * 单位圆锥：顶点在原点、沿 +Y 方向展开到 y=1、底面半径 1（无底面）。
+ * 用于日月食的本影 / 半影体积示意（模型矩阵：平移顶点 + 旋转轴 + 非等比缩放）。
+ */
+export function createCone(segments = 48) {
+  const positions = [];
+  const indices = [];
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    positions.push(0, 0, 0); // 顶点
+    positions.push(Math.cos(a), 1, Math.sin(a)); // 底面环
+  }
+  for (let i = 0; i < segments; i++) {
+    const apex = i * 2;
+    const baseA = i * 2 + 1;
+    const baseB = i * 2 + 3;
+    indices.push(apex, baseB, baseA);
+  }
+  return {
+    positions: new Float32Array(positions),
+    indices: new Uint16Array(indices),
+    count: indices.length,
+    mode: "triangles",
+  };
+}

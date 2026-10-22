@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>groundview · 无头像素自测</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: #11141a; color: #d7dbe3; }
+  body {
+    padding: 14px 16px 24px;
+    font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+  }
+  h1 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: #9aa3b2; letter-spacing: 0.04em; }
+  .grid { display: flex; flex-wrap: wrap; gap: 16px; }
+  figure { margin: 0; padding: 6px; background: #0b0e13; border: 1px solid #232a36; border-radius: 6px; }
+  canvas { display: block; width: 320px; height: 200px; }
+  figcaption { margin-top: 5px; color: #8b93a0; font-size: 11px; }
+  #out { margin: 16px 0 0; white-space: pre-wrap; font-size: 12px; color: #c8ced8; }
+</style>
+</head>
+<body>
+<h1>js/groundview.js · 无头像素自测（4 × 320×200 CSS canvas）</h1>
+
+<div class="grid">
+  <figure>
+    <canvas id="cvA" width="320" height="200"></canvas>
+    <figcaption>A 日食 · 偏食（moonRadius≈0.95·sunRadius，offsetX≈0.6·sunRadius）</figcaption>
+  </figure>
+  <figure>
+    <canvas id="cvB" width="320" height="200"></canvas>
+    <figcaption>B 日食 · 环食（moonRadius≈0.85·sunRadius，offset 0；该画布设备像素 2× 用于验证高 DPI）</figcaption>
+  </figure>
+  <figure>
+    <canvas id="cvC" width="320" height="200"></canvas>
+    <figcaption>C 月食 · 本影（offset 0，本影覆盖月心）</figcaption>
+  </figure>
+  <figure>
+    <canvas id="cvD" width="320" height="200"></canvas>
+    <figcaption>D 月食 · 半影（offsetX≈1.2·umbraRadius）</figcaption>
+  </figure>
+</div>
+
+<pre id="out">running…</pre>
+
+<!-- 模块加载失败（例如 import 报错）时的兜底：8s 后给出 FAIL，避免无头运行器读到空文本 -->
+<script>
+  window.__gvDone = false;
+  setTimeout(function () {
+    if (!window.__gvDone) {
+      document.body.innerText = "FAIL 自测超时：模块脚本未执行完成（可能是 import 失败或页面未加载）";
+    }
+  }, 8000);
+</script>
+
+<script type="module">
+import { drawGroundView } from "../js/groundview.js";
+
+const W = 320;
+const H = 200;
+const CX = W / 2;
+const CY = H / 2;
+const SCALE_RAD = (6 * Math.PI) / 180; // 与组件默认值一致：水平 ±6°
+const PX = W / 2 / SCALE_RAD; // 每弧度像素数
+const DPR = Math.max(1, window.devicePixelRatio || 1);
+
+const results = [];
+const lines = [];
+const outEl = document.getElementById("out");
+
+function record(ok, name, detail) {
+  const line = (ok ? "PASS " : "FAIL ") + name + (detail ? " — " + detail : "");
+  results.push({ ok: ok, line: line, name: name });
+  lines.push(line);
+  if (outEl) outEl.textContent = lines.join("\n");
+}
+
+function finish() {
+  window.__gvDone = true;
+  const passed = results.filter((r) => r.ok).length;
+  const failed = results.length - passed;
+  lines.push(
+    "SELFTEST RESULT: " + (failed === 0 ? "PASS" : "FAIL") + " " + passed + "/" + results.length +
+    " assertions, " + failed + " failed",
+  );
+  const text = lines.join("\n");
+  if (new URLSearchParams(location.search).has("visual")) {
+    // 调试模式：保留 4 张画布以便截图人工核对；正常无头运行仍把文本写进 body.innerText
+    if (outEl) outEl.textContent = text;
+    const note = document.createElement("p");
+    note.textContent = "（visual 调试模式：保留画布；无参数运行时 PASS/FAIL 写入 body.innerText）";
+    document.body.appendChild(note);
+  } else {
+    document.body.innerText = text;
+  }
+}
+
+const fmt = (v) => (Math.round(v * 10) / 10).toFixed(1);
+
+/** 建立 CSS 320×200、逻辑坐标 320×200 的绘制目标（设备像素可放大，验证高 DPI）。 */
+function makeTarget(id, deviceScale) {
+  const cv = document.getElementById(id);
+  cv.width = Math.round(W * deviceScale);
+  cv.height = Math.round(H * deviceScale);
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  return { cv: cv, ctx: ctx, sx: cv.width / W, sy: cv.height / H };
+}
+
+/** 以 CSS 逻辑坐标采样单像素（内部换算到设备像素）。 */
+function sample(target, x, y) {
+  const px = Math.min(target.cv.width - 1, Math.max(0, Math.round(x * target.sx)));
+  const py = Math.min(target.cv.height - 1, Math.max(0, Math.round(y * target.sy)));
+  const d = target.ctx.getImageData(px, py, 1, 1).data;
+  const r = d[0];
+  const g = d[1];
+  const b = d[2];
+  return { r: r, g: g, b: b, a: d[3], avg: (r + g + b) / 3 };
+}
+
+/** 整张画布的平均亮度（RGB 三通道均值）。 */
+function meanBrightness(target) {
+  const img = target.ctx.getImageData(0, 0, target.cv.width, target.cv.height).data;
+  let sum = 0;
+  for (let i = 0; i < img.length; i += 4) {
+    sum += (img[i] + img[i + 1] + img[i + 2]) / 3;
+  }
+  return sum / (img.length / 4);
+}
+
+/* ------------------------------ 测试数据 ------------------------------ */
+
+const dataA = {
+  kind: "solar",
+  scaleRad: SCALE_RAD,
+  solar: { sunRadius: 0.02, moonRadius: 0.019, offsetX: 0.012, offsetY: 0, glow: 0.35 },
+  caption: "地面观测 · 日食（偏食）",
+};
+const dataB = {
+  kind: "solar",
+  scaleRad: SCALE_RAD,
+  solar: { sunRadius: 0.02, moonRadius: 0.017, offsetX: 0, offsetY: 0, glow: 0.85 },
+  caption: "地面观测 · 日食（环食）",
+};
+const dataC = {
+  kind: "lunar",
+  scaleRad: SCALE_RAD,
+  lunar: { moonRadius: 0.012, umbraRadius: 0.018, penumbraRadius: 0.027, offsetX: 0, offsetY: 0 },
+  caption: "地面观测 · 月食（本影）",
+};
+const dataD = {
+  kind: "lunar",
+  scaleRad: SCALE_RAD,
+  lunar: { moonRadius: 0.012, umbraRadius: 0.018, penumbraRadius: 0.027, offsetX: 0.0216, offsetY: 0 },
+  caption: "地面观测 · 月食（半影）",
+};
+
+/* ------------------------------ 执行自测 ------------------------------ */
+
+function runTests() {
+  // A / C / D 跟随真实 DPR；B 强制至少 2× 设备像素，专门验证「调用方 scale + 逻辑坐标」路径
+  const targetA = makeTarget("cvA", DPR);
+  const targetB = makeTarget("cvB", Math.max(2, DPR));
+  const targetC = makeTarget("cvC", DPR);
+  const targetD = makeTarget("cvD", DPR);
+
+  drawGroundView(targetA.ctx, W, H, dataA);
+  drawGroundView(targetB.ctx, W, H, dataB);
+  drawGroundView(targetC.ctx, W, H, dataC);
+  drawGroundView(targetD.ctx, W, H, dataD);
+
+  // 1) 每张画布非全黑（平均亮度 > 2）
+  const meanA = meanBrightness(targetA);
+  const meanB = meanBrightness(targetB);
+  const meanC = meanBrightness(targetC);
+  const meanD = meanBrightness(targetD);
+  record(meanA > 2, "1A 画布非全黑", "平均亮度 " + fmt(meanA) + " > 2");
+  record(meanB > 2, "1B 画布非全黑", "平均亮度 " + fmt(meanB) + " > 2");
+  record(meanC > 2, "1C 画布非全黑", "平均亮度 " + fmt(meanC) + " > 2");
+  record(meanD > 2, "1D 画布非全黑", "平均亮度 " + fmt(meanD) + " > 2");
+
+  // 2) A 偏食：日面亮、月盘暗、差异显著
+  //    注意几何事实：日心在画布中心，月心仅偏移 0.6·sunRadius，而月盘半径 0.95·sunRadius，
+  //    故「日心」本身被月盘遮挡；这里在日面未被遮挡侧（日心左侧 0.7·sunRadius 处）取亮采样。
+  const sunPx = 0.02 * PX;
+  const moonPx = 0.019 * PX;
+  const offPx = 0.012 * PX;
+  const aSun = sample(targetA, CX - 0.7 * sunPx, CY);
+  const aMoon = sample(targetA, CX + offPx, CY);
+  record(aSun.avg > 150, "2A 日面可见处亮", "avg=" + fmt(aSun.avg) + " > 150（日心左侧 0.7·sunRadius）");
+  record(aMoon.avg < 60, "2A 月盘覆盖处暗", "avg=" + fmt(aMoon.avg) + " < 60（月盘中心，遮住日面）");
+  record(aSun.avg - aMoon.avg > 80, "2A 明暗差异显著", "Δ=" + fmt(aSun.avg - aMoon.avg) + " > 80");
+
+  // 3) B 环食：月亮角半径 0.85·sunRadius 且同心，环食中心必然被不透明月盘占据（应为暗），
+  //    亮环在 0.85R..1.0R 之间。因此在 0.925·sunRadius 的四个方向采样亮环，并验证中心为暗。
+  const sunPxRing = 0.02 * PX;
+  const ringR = 0.925 * sunPxRing;
+  const ring = [
+    sample(targetB, CX - ringR, CY),
+    sample(targetB, CX + ringR, CY),
+    sample(targetB, CX, CY - ringR),
+    sample(targetB, CX, CY + ringR),
+  ];
+  const ringMin = Math.min(ring[0].avg, ring[1].avg, ring[2].avg, ring[3].avg);
+  const bCenter = sample(targetB, CX, CY);
+  record(ringMin > 120, "3B 环食亮环可见（4 方向亮环采样）", "min avg=" + fmt(ringMin) + " > 120 @ r=0.925·sunRadius");
+  record(bCenter.avg < 60, "3B 环食中心被不透明月盘遮挡（中心为暗）", "avg=" + fmt(bCenter.avg) + " < 60");
+  record(ringMin - bCenter.avg > 80, "3B 亮环与暗中心对比显著", "Δ=" + fmt(ringMin - bCenter.avg) + " > 80");
+
+  // 4) C 本影月食：月面中心（=地影轴）暗红棕
+  const cCenter = sample(targetC, CX, CY);
+  record(cCenter.r > cCenter.g, "4C 本影中心偏红（R>G）", "R=" + cCenter.r + " G=" + cCenter.g);
+  record(cCenter.r < 120, "4C 本影中心亮度不过曝（R<120）", "R=" + cCenter.r + " < 120");
+  record(cCenter.avg < 80, "4C 本影中心整体偏暗", "avg=" + fmt(cCenter.avg) + " < 80");
+
+  // 5) D 半影月食：月心（画布中心）仍较亮；靠本影一侧明显更暗
+  //    月心相对地影轴右移 1.2·umbraRadius，故地影轴在画布中心左侧。
+  const moonPxD = 0.012 * PX;
+  const dCenter = sample(targetD, CX, CY);
+  const dTowardUmbra = sample(targetD, CX - 0.6 * moonPxD, CY); // 靠本影（左侧）
+  const dAway = sample(targetD, CX + 0.6 * moonPxD, CY); // 背离本影（右侧）
+  record(dCenter.avg > 80, "5D 半影月面中心仍较亮", "avg=" + fmt(dCenter.avg) + " > 80");
+  record(
+    dTowardUmbra.avg < dAway.avg - 40 && dTowardUmbra.avg < dCenter.avg,
+    "5D 靠近本影一侧比另一侧暗",
+    "近本影 avg=" + fmt(dTowardUmbra.avg) + "，中心 avg=" + fmt(dCenter.avg) + "，背离侧 avg=" + fmt(dAway.avg),
+  );
+
+  // 6) 容错：data 缺失 / kind 非法时不得抛错，仍画深色渐变天空
+  let robustThrew = false;
+  let robustAvg = -1;
+  try {
+    const ocv = document.createElement("canvas");
+    ocv.width = 120;
+    ocv.height = 80;
+    const octx = ocv.getContext("2d", { willReadFrequently: true });
+    drawGroundView(octx, 120, 80, undefined);
+    drawGroundView(octx, 120, 80, { kind: "none" });
+    drawGroundView(octx, 120, 80, { kind: "solar" });
+    drawGroundView(octx, 120, 80, { kind: "solar", solar: { sunRadius: NaN, moonRadius: -3 } });
+    drawGroundView(octx, 120, 80, { kind: "lunar", lunar: { umbraRadius: 0, penumbraRadius: 0 } });
+    const img = octx.getImageData(0, 0, 120, 80).data;
+    let sum = 0;
+    for (let i = 0; i < img.length; i += 4) sum += (img[i] + img[i + 1] + img[i + 2]) / 3;
+    robustAvg = sum / (img.length / 4);
+  } catch (e) {
+    robustThrew = true;
+  }
+  record(
+    !robustThrew && robustAvg > 2,
+    "6 容错 data 缺失/非法不抛错且仍画天空",
+    robustThrew ? "抛出了异常" : "平均亮度 " + fmt(robustAvg) + " > 2",
+  );
+}
+
+try {
+  runTests();
+  finish();
+} catch (err) {
+  record(false, "自测执行异常", String((err && err.stack) || err));
+  finish();
+}
+</script>
+</body>
+</html>

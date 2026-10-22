@@ -206,3 +206,90 @@ kbd {
   #controls { flex-basis: auto; width: 100%; }
   canvas#view { height: 60vh; min-height: 320px; }
 }
+
+/* —— V3：模式切换 / 事务性面板 / 地面观测 / 日食 HUD —— */
+
+.seg {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.seg button {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(212, 162, 76, 0.08);
+}
+
+.row.disabled label { opacity: 0.45; }
+.row.disabled input[type="range"] { opacity: 0.35; cursor: not-allowed; }
+
+input[type="datetime-local"] {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #0d131b;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* 地面观测小窗 */
+#ground-wrap {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  background: rgba(4, 6, 12, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 6px 2px;
+  pointer-events: none;
+}
+#ground-wrap canvas { display: block; border-radius: 5px; }
+.ground-cap {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 3px 2px 2px;
+}
+#ground-wrap[hidden] { display: none; }
+
+/* 日食 / 月食 顶部信息条 */
+#eclipse-hud {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  max-width: calc(100% - 28px);
+  padding: 8px 12px;
+  background: rgba(4, 6, 12, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  pointer-events: none;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+#eclipse-hud .hud-title {
+  display: block;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+#eclipse-hud .hud-line { color: var(--muted); }
+#eclipse-hud[hidden] { display: none; }
+
+#astro-info { color: var(--muted); font-size: 11.5px; line-height: 1.7; }
+#astro-info .muted, .muted { color: #6b7484; }
+

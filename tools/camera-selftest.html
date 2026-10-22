@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>camera.js 浏览器自测 · 偏航/俯仰环绕 + WASD</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    padding: 18px 22px;
+    background: #0b0f17;
+    color: #d7e0f0;
+    font: 13px/1.55 "Cascadia Mono", "Consolas", monospace;
+  }
+  h1 { margin: 0 0 10px; font-size: 15px; font-weight: 600; color: #8ecbff; }
+  pre { margin: 0; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>camera.js 浏览器自测 · 偏航/俯仰环绕 + WASD</h1>
+<pre id="out">运行中…</pre>
+
+<!-- 教材配套数学库：普通脚本先加载，camera.js 模块内通过 window 取 vec3 / lookAt / ... -->
+<script src="../Common/MV.js"></script>
+<script type="module">
+import { createCamera, ndcFromEvent } from "../js/camera.js";
+
+const MV = window;
+
+// ---------------------------------------------------------------- 测试框架
+
+const lines = [];
+let passed = 0;
+let failed = 0;
+
+/** 断言：把 PASS / FAIL 逐行记录下来，最后整体写入 document.body.innerText。 */
+function check(name, ok, detail = "") {
+  const line = `${ok ? "PASS" : "FAIL"} ${name}${detail ? " — " + detail : ""}`;
+  lines.push(line);
+  if (ok) passed++;
+  else failed++;
+}
+
+/** 单个测试块：执行异常也会记成一行 FAIL，避免整页空白。 */
+function test(name, fn) {
+  try {
+    fn();
+  } catch (err) {
+    check(`${name}（执行异常）`, false, err && err.message ? err.message : String(err));
+  }
+}
+
+// 小工具
+const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
+const vlen = (v) => MV.length(v);
+const vdist = (a, b) => MV.length(MV.subtract(a, b));
+const vdot = (a, b) => MV.dot(a, b);
+const vnorm = (v) => MV.normalize(MV.vec3(v[0], v[1], v[2]));
+const f3 = (x) => Number(x).toFixed(3);
+const f6 = (x) => Number(x).toFixed(6);
+const fmtV = (v) => `[${v.map((x) => f3(x)).join(", ")}]`;
+
+/** 设置 WASD 输入（其余键强制为 false）。 */
+function setMove(cam, flags = {}) {
+  const m = cam.moveInput;
+  m.forward = !!flags.forward;
+  m.back = !!flags.back;
+  m.left = !!flags.left;
+  m.right = !!flags.right;
+  m.fast = !!flags.fast;
+}
+
+/** 统一从默认漫游位姿切到交互模式，作为各测试的确定性起点。 */
+function interactiveCamera() {
+  const cam = createCamera();
+  cam.setInteractiveFromCurrent();
+  cam.viewMatrix();
+  return cam;
+}
+
+// ---------------------------------------------------------------- 1. 默认状态与轨道模型
+
+test("1 默认漫游与球面轨道模型", () => {
+  const cam = createCamera();
+  check(
+    "1 默认 mode=tour 且 playing=true",
+    cam.mode === "tour" && cam.playing === true,
+    `mode=${cam.mode}, playing=${cam.playing}`,
+  );
+  check("1b tourPeriod = 18s", cam.tourPeriod === 18, `tourPeriod=${cam.tourPeriod}`);
+  check(
+    "1c up 恒为 (0,1,0)",
+    cam.up[0] === 0 && cam.up[1] === 1 && cam.up[2] === 0,
+    `up=${fmtV(cam.up)}`,
+  );
+  const defaultDist = Math.sqrt(0 * 0 + 9 * 9 + 28 * 28);
+  check(
+    "1d 默认 orbit.dist = |eye-target|",
+    near(cam.orbit.dist, defaultDist, 1e-9),
+    `dist=${f6(cam.orbit.dist)}, 期望=${f6(defaultDist)}`,
+  );
+  const t0 = cam.tourTime;
+  cam.tick(1);
+  check(
+    "1e tour 模式下 tick 推进 tourTime",
+    cam.tourTime > t0 && near(cam.tourTime, 1, 1e-9),
+    `tourTime ${f3(t0)} → ${f3(cam.tourTime)}`,
+  );
+
+  // 直接指定 yaw / pitch / dist / target，验证 eye = target + dist*dir
+  cam.setInteractiveFromCurrent();
+  cam.orbit.yaw = 0.7;
+  cam.orbit.pitch = 0.4;
+  cam.orbit.dist = 12;
+  cam.orbit.target = MV.vec3(1, 2, 3);
+  cam.viewMatrix();
+  const cp = Math.cos(0.4);
+  const dir = [Math.sin(0.7) * cp, Math.sin(0.4), Math.cos(0.7) * cp];
+  const wantEye = [1 + 12 * dir[0], 2 + 12 * dir[1], 3 + 12 * dir[2]];
+  check(
+    "1f eye = target + dist·dir(yaw,pitch)",
+    vdist(cam.eye, wantEye) < 1e-9,
+    `eye=${fmtV(cam.eye)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 2/3. 拖拽方向约定
+
+test("2 拖拽向下 pitch 增大", () => {
+  const cam = interactiveCamera();
+  const pitch0 = cam.orbit.pitch;
+  cam.beginDrag(0.0, 0.60);
+  cam.drag(0.0, 0.45); // NDC y 由 0.60 降到 0.45 = 屏幕向下拖 0.15
+  cam.endDrag();
+  check(
+    "2 拖拽向下 pitch 增大（相机升高俯视）",
+    cam.orbit.pitch > pitch0 + 1e-9,
+    `pitch ${f3(pitch0)} → ${f3(cam.orbit.pitch)}`,
+  );
+});
+
+test("3 拖拽向右 yaw 减小", () => {
+  const cam = interactiveCamera();
+  const yaw0 = cam.orbit.yaw;
+  cam.beginDrag(-0.2, 0.0);
+  cam.drag(0.2, 0.0); // 屏幕向右拖 0.4 NDC
+  cam.endDrag();
+  check(
+    "3 拖拽向右 yaw 减小（相机向右转）",
+    cam.orbit.yaw < yaw0 - 1e-9,
+    `yaw ${f3(yaw0)} → ${f3(cam.orbit.yaw)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 4/5. 俯仰方向一致性与限位
+
+test("4 连续 20 次同向下拖", () => {
+  const cam = interactiveCamera();
+  cam.orbit.pitch = 0.2; // 从中间出发，20 次小幅下拖仍不到上限
+  cam.beginDrag(0.0, 0.9);
+  let y = 0.9;
+  const deltas = [];
+  for (let i = 0; i < 20; i++) {
+    const before = cam.orbit.pitch;
+    y -= 0.02;
+    cam.drag(0.0, y);
+    deltas.push(cam.orbit.pitch - before);
+  }
+  cam.endDrag();
+  check(
+    "4 连续 20 次同向下拖 pitch 增量符号恒为正",
+    deltas.every((d) => d > 0),
+    `最小增量=${Math.min(...deltas).toExponential(2)} rad`,
+  );
+  const expectPitch = 0.2 + 20 * 0.02 * cam.config.dragSensitivity;
+  check(
+    "4b 20 次下拖后 pitch 增量与灵敏度一致且不越界",
+    near(cam.orbit.pitch, Math.min(expectPitch, cam.config.pitchLimit), 1e-9),
+    `pitch=${f3(cam.orbit.pitch)}，期望=${f3(Math.min(expectPitch, cam.config.pitchLimit))}`,
+  );
+});
+
+test("5 pitch 达到上限后不再增长", () => {
+  const cam = interactiveCamera();
+  cam.orbit.pitch = 1.30; // 距离上限只差 0.18 rad
+  cam.beginDrag(0.0, 0.9);
+  let y = 0.9;
+  for (let i = 0; i < 20; i++) {
+    y -= 0.02;
+    cam.drag(0.0, y); // 总计 +0.88 rad，必然撞上限
+  }
+  const reached = cam.orbit.pitch;
+  let stable = true;
+  for (let i = 0; i < 10; i++) {
+    const before = cam.orbit.pitch;
+    y -= 0.02;
+    cam.drag(0.0, y);
+    if (!near(cam.orbit.pitch, before, 0)) stable = false;
+  }
+  cam.endDrag();
+  check(
+    "5 pitch 被严格夹在 ±pitchLimit",
+    near(reached, cam.config.pitchLimit, 1e-9) && near(cam.orbit.pitch, cam.config.pitchLimit, 1e-9),
+    `reached=${f6(reached)}, 最终=${f6(cam.orbit.pitch)}, 上限=${cam.config.pitchLimit}`,
+  );
+  check(
+    "5b 达到上限后继续下拖不再增长",
+    stable && cam.orbit.pitch === cam.config.pitchLimit,
+    `pitch=${f6(cam.orbit.pitch)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 6. 缩放
+
+test("6 缩放只改 dist，target 不变", () => {
+  const cam = interactiveCamera();
+  const target0 = cam.orbit.target.slice();
+  const dist0 = cam.orbit.dist;
+  cam.zoom(120); // 滚轮向下 = 拉远
+  check(
+    "6 缩放后 target 保持不变",
+    target0.every((v, i) => cam.orbit.target[i] === v),
+    `target=${fmtV(cam.orbit.target)}`,
+  );
+  check(
+    "6b 滚轮方向正确（delta>0 拉远）",
+    cam.orbit.dist > dist0,
+    `dist ${f3(dist0)} → ${f3(cam.orbit.dist)}`,
+  );
+
+  // 漫游中缩放也要接管为交互模式
+  const cam2 = createCamera();
+  cam2.tick(2.0);
+  cam2.viewMatrix();
+  const keyTarget = cam2.at.slice();
+  cam2.zoom(-120);
+  cam2.viewMatrix();
+  check(
+    "6c 漫游中缩放切到 interactive 且 playing=false",
+    cam2.mode === "interactive" && cam2.playing === false,
+    `mode=${cam2.mode}, playing=${cam2.playing}`,
+  );
+  check(
+    "6d 接管缩放时 target 仍为当前注视点",
+    vdist(cam2.orbit.target, keyTarget) < 1e-9,
+    `target=${fmtV(cam2.orbit.target)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 7/8. WASD
+
+test("7 按住 W tick(1s)", () => {
+  const cam = interactiveCamera();
+  const eye0 = cam.eye.slice();
+  const at0 = cam.at.slice();
+  const dist0 = vdist(at0, eye0);
+  setMove(cam, { forward: true });
+  cam.tick(1);
+  setMove(cam);
+  cam.viewMatrix();
+
+  const forward = vnorm(MV.subtract(at0, eye0));
+  const moved = MV.subtract(cam.eye, eye0);
+  const movedLen = vlen(moved);
+  const dirDot = movedLen > 1e-9 ? vdot(MV.scale(1 / movedLen, moved), forward) : -1;
+  check(
+    "7 W 按住 tick(1s) 后 eye 沿视线前向移动",
+    dirDot > 0.9999 && movedLen > 1e-6,
+    `方向点积=${f6(dirDot)}, 位移=${f3(movedLen)}`,
+  );
+  check(
+    "7b W 移动后 |eye-target| 保持不变",
+    near(vdist(cam.at, cam.eye), dist0, 1e-9),
+    `dist ${f6(dist0)} → ${f6(vdist(cam.at, cam.eye))}`,
+  );
+
+  // 漫游中按 WASD：先接管再移动
+  const cam2 = createCamera();
+  cam2.tick(2.0);
+  cam2.viewMatrix();
+  const eyeTour = cam2.eye.slice();
+  setMove(cam2, { forward: true });
+  cam2.tick(0.5);
+  setMove(cam2);
+  cam2.viewMatrix();
+  check(
+    "7c 漫游中按 W 先转 interactive 再移动",
+    cam2.mode === "interactive" && cam2.playing === false && vdist(cam2.eye, eyeTour) > 1e-6,
+    `mode=${cam2.mode}, 位移=${f3(vdist(cam2.eye, eyeTour))}`,
+  );
+});
+
+test("8 W+D 对角移动不加速", () => {
+  function displacement(flags) {
+    const cam = interactiveCamera();
+    const eye0 = cam.eye.slice();
+    setMove(cam, flags);
+    cam.tick(1);
+    setMove(cam);
+    cam.viewMatrix();
+    return vlen(MV.subtract(cam.eye, eye0));
+  }
+  const dW = displacement({ forward: true });
+  const dWD = displacement({ forward: true, right: true });
+  const rel = Math.abs(dWD - dW) / dW;
+  check(
+    "8 W+D 对角位移长度 ≈ W 单键位移（±2%）",
+    rel <= 0.02,
+    `W=${f4(dW)}, W+D=${f4(dWD)}, 相对差=${(rel * 100).toFixed(3)}%`,
+  );
+  function f4(x) {
+    return Number(x).toFixed(4);
+  }
+});
+
+// ---------------------------------------------------------------- 9. 拾取射线
+
+test("9 rayFromNdc 与投影一致", () => {
+  const cam = interactiveCamera();
+  const aspect = 16 / 9;
+  const viewDir = vnorm(MV.subtract(cam.at, cam.eye));
+  let ray = cam.rayFromNdc(0, 0, aspect);
+  check(
+    "9 中心 NDC 射线方向 ≈ normalize(target-eye)（透视）",
+    vdot(ray.dir, viewDir) > 0.999999,
+    `dot=${f6(vdot(ray.dir, viewDir))}`,
+  );
+  check(
+    "9b 透视中心射线起点为 eye",
+    vdist(ray.origin, cam.eye) <= 1e-12,
+    `origin=${fmtV(ray.origin)}`,
+  );
+
+  cam.toggleProjection();
+  cam.viewMatrix();
+  ray = cam.rayFromNdc(0, 0, aspect);
+  check(
+    "9c 中心 NDC 射线方向 ≈ normalize(target-eye)（正交）",
+    vdot(ray.dir, vnorm(MV.subtract(cam.at, cam.eye))) > 0.999999,
+    `dot=${f6(vdot(ray.dir, vnorm(MV.subtract(cam.at, cam.eye))))}`,
+  );
+  const rayA = cam.rayFromNdc(-0.5, 0.3, aspect);
+  const rayB = cam.rayFromNdc(0.7, -0.2, aspect);
+  check(
+    "9d 正交各 NDC 射线互相平行、起点不同",
+    near(vdot(rayA.dir, rayB.dir), 1, 1e-9) && vdist(rayA.origin, rayB.origin) > 1e-6,
+    `dot=${f6(vdot(rayA.dir, rayB.dir))}, 起点差=${f3(vdist(rayA.origin, rayB.origin))}`,
+  );
+});
+
+// ---------------------------------------------------------------- 10. 日食 / 月食视点
+
+test("10 日食视点平滑进入、拖拽后仍保持 eclipse", () => {
+  const cam = createCamera();
+  cam.viewMatrix();
+  const startEye = cam.eye.slice();
+  const eclipseEye = [20, 3, 2];
+  const eclipseAt = [1, 0, -0.5];
+
+  cam.setEclipseView("solar", eclipseEye, eclipseAt);
+  check(
+    "10a setEclipseView 进入 eclipse 模式",
+    cam.mode === "eclipse" && cam.eclipseKind === "solar" && cam.playing === false,
+    `mode=${cam.mode}, kind=${cam.eclipseKind}`,
+  );
+  check(
+    "10b 进入过渡开始时位姿仍接近旧位姿（平滑而非瞬移）",
+    vdist(cam.eye, startEye) < 0.5,
+    `Δ=${f3(vdist(cam.eye, startEye))}`,
+  );
+
+  cam.tick(0.3); // 一半时长
+  cam.viewMatrix();
+  const midDist = vdist(cam.eye, eclipseEye);
+  cam.tick(0.4); // 累计 0.7s > 0.6s，应已到位
+  cam.viewMatrix();
+  const endDist = vdist(cam.eye, eclipseEye);
+  check(
+    "10c 约 0.6s 平滑到达日食视点",
+    endDist < 1e-6 && midDist > endDist,
+    `中途距离=${f3(midDist)}, 最终距离=${endDist.toExponential(2)}`,
+  );
+
+  // 拖拽应该仍然可用，且模式保持 eclipse
+  const beforeDrag = cam.eye.slice();
+  cam.beginDrag(0.0, 0.0);
+  cam.drag(0.25, 0.12);
+  cam.endDrag();
+  cam.tick(1 / 60);
+  cam.viewMatrix();
+  const dragged = vdist(cam.eye, beforeDrag);
+  check(
+    "10d 日食视点内拖拽后模式仍为 eclipse",
+    cam.mode === "eclipse" && cam.eclipseKind === "solar",
+    `mode=${cam.mode}, kind=${cam.eclipseKind}`,
+  );
+  check(
+    "10e 日食视点内拖拽使位姿变化",
+    dragged > 1e-3,
+    `Δ=${f3(dragged)}`,
+  );
+
+  // 之后不应自行恢复自动运动
+  const afterDrag = cam.eye.slice();
+  for (let i = 0; i < 120; i++) cam.tick(1 / 60);
+  cam.viewMatrix();
+  const drift = vdist(cam.eye, afterDrag);
+  check(
+    "10f 拖拽后 tick 2s 不再自动运动",
+    drift < 1e-9,
+    `漂移=${drift.toExponential(2)}`,
+  );
+
+  // updateEclipseView（main 每帧提供视点）不能覆盖用户已接管的视角
+  cam.updateEclipseView(eclipseEye, eclipseAt);
+  cam.tick(1 / 60);
+  cam.viewMatrix();
+  check(
+    "10g updateEclipseView 不覆盖用户拖拽后的视角",
+    vdist(cam.eye, afterDrag) < 1e-6,
+    `Δ=${vdist(cam.eye, afterDrag).toExponential(2)}`,
+  );
+
+  // 日食视点内 WASD 同样可用（用户接管后不会被基准位姿吸回）
+  const beforeWasd = cam.eye.slice();
+  setMove(cam, { forward: true });
+  cam.tick(0.5);
+  setMove(cam);
+  cam.viewMatrix();
+  const wasdDelta = vdist(cam.eye, beforeWasd);
+  check(
+    "10h 日食视点内 WASD 仍可自由移动",
+    cam.mode === "eclipse" && wasdDelta > 1e-3,
+    `Δ=${f3(wasdDelta)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 11. 聚焦
+
+test("11 setFocusTarget 后平滑收敛", () => {
+  const cam = interactiveCamera();
+  const radius = 1.5;
+  const bodyPos = [3, 1, -2];
+  cam.setFocusTarget(bodyPos, radius, "earth");
+  check(
+    "11a setFocusTarget 进入 focus 模式并记录天体",
+    cam.mode === "focus" && cam.focusBodyId === "earth",
+    `mode=${cam.mode}, focusBodyId=${cam.focusBodyId}`,
+  );
+  const pitchBefore = cam.orbit.pitch;
+  for (let i = 0; i < 180; i++) cam.tick(1 / 60); // 3s
+  cam.viewMatrix();
+  const wantDist = radius * cam.config.focusDistFactor;
+  check(
+    "11 dist 收敛到 radius × focusDistFactor",
+    Math.abs(cam.orbit.dist - wantDist) < 1e-3,
+    `dist=${f6(cam.orbit.dist)}, 期望=${f6(wantDist)}`,
+  );
+  check(
+    "11b target 收敛到天体位置且 yaw/pitch 保持",
+    vdist(cam.orbit.target, bodyPos) < 1e-3 && near(cam.orbit.pitch, pitchBefore, 1e-9),
+    `target=${fmtV(cam.orbit.target)}, Δpitch=${(cam.orbit.pitch - pitchBefore).toExponential(2)}`,
+  );
+
+  // 聚焦状态下拖拽仍环绕 focus target，模式不变
+  const yaw0 = cam.orbit.yaw;
+  cam.beginDrag(0.0, 0.0);
+  cam.drag(0.1, 0.05);
+  cam.endDrag();
+  cam.tick(1 / 60);
+  cam.viewMatrix();
+  check(
+    "11c 聚焦时拖拽仍为 focus 且环绕 focus target",
+    cam.mode === "focus" && cam.focusBodyId === "earth"
+      && Math.abs(cam.orbit.yaw - yaw0) > 1e-6
+      && vdist(cam.orbit.target, bodyPos) < 1e-2,
+    `mode=${cam.mode}, Δyaw=${(cam.orbit.yaw - yaw0).toFixed(3)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 12. 其它接口 / 回归
+
+test("12 tour 拖拽接管、ndcFromEvent", () => {
+  const cam = createCamera();
+  cam.tick(2.5); // 漫游到 2.5s
+  cam.viewMatrix();
+  const keyEye = cam.eye.slice();
+  const keyAt = cam.at.slice();
+  cam.beginDrag(0.1, 0.2);
+  check(
+    "12 漫游中 beginDrag 同步当前关键帧位姿并转 interactive",
+    cam.mode === "interactive" && cam.playing === false
+      && vdist(cam.orbit.target, keyAt) < 1e-9
+      && near(cam.orbit.dist, vdist(keyEye, keyAt), 1e-9),
+    `mode=${cam.mode}, target=${fmtV(cam.orbit.target)}`,
+  );
+  cam.endDrag();
+
+  // ndcFromEvent：画布中心 → (0,0)
+  const canvas = {
+    getBoundingClientRect: () => ({ left: 100, top: 50, width: 400, height: 300 }),
+  };
+  const ndc = ndcFromEvent(canvas, { clientX: 300, clientY: 200 });
+  check(
+    "12b ndcFromEvent 仍是可用的导出（中心映射为 0,0）",
+    typeof ndcFromEvent === "function" && near(ndc[0], 0) && near(ndc[1], 0),
+    `ndc=[${ndc.map((v) => v.toFixed(3)).join(", ")}]`,
+  );
+});
+
+// ---------------------------------------------------------------- 13. 接口 / 配置
+
+test("13 接口与配置完整性", () => {
+  const cam = createCamera();
+  const methods = [
+    "tick", "viewMatrix", "projMatrix", "orthoBounds", "rayFromNdc",
+    "beginDrag", "drag", "endDrag", "zoom",
+    "focusOn", "setFocusTarget", "setFocusBodyPos", "clearFocus", "focusOverview",
+    "setEclipseView", "setEclipsePose", "updateEclipseView",
+    "setTourTime", "resumeTour", "togglePlay", "toggleProjection", "setInteractiveFromCurrent",
+  ];
+  const missingMethods = methods.filter((m) => typeof cam[m] !== "function");
+  check(
+    "13 保留方法全部存在",
+    missingMethods.length === 0,
+    missingMethods.length ? "缺失: " + missingMethods.join(", ") : `共 ${methods.length} 个方法`,
+  );
+
+  const cfg = cam.config;
+  const keys = ["dragSensitivity", "moveBaseSpeed", "fastMul", "minDist", "maxDist", "pitchLimit", "focusDistFactor"];
+  const missingKeys = keys.filter((k) => !(k in cfg));
+  check(
+    "13b config 必填参数齐全",
+    missingKeys.length === 0,
+    missingKeys.length ? "缺失: " + missingKeys.join(", ") : `dragSensitivity=${cfg.dragSensitivity}`,
+  );
+  const cfgOk = cfg.moveBaseSpeed === 0.9 && cfg.fastMul === 2.6 && cfg.minDist === 0.05
+    && cfg.maxDist === 400 && cfg.pitchLimit === 1.48 && cfg.focusDistFactor === 4.2
+    && Number.isFinite(cfg.dragSensitivity) && cfg.dragSensitivity > 0;
+  check(
+    "13c config 参数值符合约定",
+    cfgOk,
+    `moveBaseSpeed=${cfg.moveBaseSpeed}, focusDistFactor=${cfg.focusDistFactor}, dragSensitivity=${cfg.dragSensitivity}`,
+  );
+
+  check(
+    "13d 关键属性 / 导出齐全",
+    cam.tourPeriod === 18 && Array.isArray(cam.orbit.target)
+      && "yaw" in cam.orbit && "pitch" in cam.orbit && "dist" in cam.orbit
+      && "forward" in cam.moveInput && "fast" in cam.moveInput
+      && cam.up[1] === 1 && typeof ndcFromEvent === "function",
+    `tourPeriod=${cam.tourPeriod}, up=${fmtV(cam.up)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 输出
+
+const summary = lines.concat(
+  "",
+  `汇总：PASS ${passed} / FAIL ${failed} / 共 ${passed + failed} 项`,
+  failed === 0 ? "SELFTEST RESULT: ALL PASS" : "SELFTEST RESULT: FAIL",
+);
+document.getElementById("out").textContent = summary.join("\n");
+// 自测页要求：逐行写入 document.body.innerText（无头运行器直接读取它）
+document.body.innerText = summary.join("\n");
+window.__cameraSelftest = { lines, passed, failed };
+</script>
+</body>
+</html>
