@@ -276,9 +276,10 @@ function drawNode(node, ecl, fx) {
   gl.uniform1f(loc.shadowMode, 0);
   gl.uniform1f(loc.time, fx.sunTime);
 
+  // 全局阴影只做轻微环境压暗；真正的本影/半影由几何阴影贴图（乘色）负责
   let shadow = 0;
-  if (node.id === "earth") shadow = ecl.solar * 0.7;
-  if (node.id === "moon") shadow = ecl.lunar * 0.85;
+  if (node.id === "earth") shadow = ecl.solar * 0.25;
+  if (node.id === "moon") shadow = ecl.lunar * 0.35;
   gl.uniform1f(loc.shadow, shadow);
 
   if (node.kind === "orbit") {

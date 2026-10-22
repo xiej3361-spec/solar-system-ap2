@@ -471,7 +471,7 @@ export function createScene() {
     else sim.time = 0;
   }
 
-  /** 日月食取景：围绕地月区域构图，视角垂直于日–地–月连线 */
+  /** 日月食取景：围绕地月区域构图。日食偏太阳一侧，能同时看到昼面与被遮暗的阴影斑 */
   function eclipseCameras() {
     const e = eclipseState();
     if (!e.earth) return null;
@@ -481,20 +481,26 @@ export function createScene() {
       MV.length(MV.subtract(e.earth, e.moon)) * 0.5 + PLANETS.find((p) => p.id === "earth").radius + MOON.radius,
       1.2,
     );
-    const dist = span * 3.4;
     const up = MV.vec3(0, 1, 0);
     const axis = MV.normalize(MV.subtract(e.earth, e.sun).slice());
     const side = MV.normalize(MV.cross(axis, up).slice());
-    const dir = MV.normalize(MV.add(MV.scale(0.86, side), MV.scale(0.36, up)));
-    const eye = MV.add(mid, MV.scale(dist, dir));
 
-    // 地面点击视点：从地月连线侧向再抬高一点
-    const groundEye = MV.add(mid, MV.scale(dist * 1.15, MV.normalize(MV.add(MV.scale(0.7, side), MV.scale(0.62, up)))));
+    // 日食：从「太阳一侧 + 侧面 + 略高」看向地月区域 —— 地球昼面朝向镜头，
+    // 月影落点不会被球体自身遮住（侧视角会把本影斑压到边缘上）。
+    const solarDir = MV.normalize(MV.add(MV.add(MV.scale(-0.55, axis), MV.scale(0.8, side)), MV.scale(0.22, up)));
+    const solarEye = MV.add(mid, MV.scale(span * 2.7, solarDir));
+
+    // 月食：侧视角，能同时看到地影锥与进入阴影的月球
+    const lunarDir = MV.normalize(MV.add(MV.scale(0.86, side), MV.scale(0.34, up)));
+    const lunarEye = MV.add(mid, MV.scale(span * 3.0, lunarDir));
+
+    // 地面视点：贴近地表，由 main.js 的 groundPose 精确覆盖
+    const groundEye = MV.add(mid, MV.scale(span * 3.0, MV.normalize(MV.add(MV.scale(0.7, side), MV.scale(0.62, up)))));
 
     void geo;
     return {
-      solar: { eye, at: mid },
-      lunar: { eye, at: mid },
+      solar: { eye: solarEye, at: mid },
+      lunar: { eye: lunarEye, at: mid },
       ground: { eye: groundEye, at: mid },
     };
   }
