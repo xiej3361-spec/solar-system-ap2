@@ -1,0 +1,13 @@
+# 交付包与生成物（本地保留，不进仓库）
+AP2-solar-system-src.zip
+
+# 录屏原始帧（18MB 中间产物，最终 GIF 已保留）
+screenshots/frames/
+
+# 分析过程产物
+tools/site/
+tools/dsh-inspect/
+tools/rea-skill-staging/
+tools/asar-listing.txt
+tools/asar-list.mjs.cjs
+tools/asar-extract.mjs.cjs

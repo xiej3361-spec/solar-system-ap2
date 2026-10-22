@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AP2 · 三维层级场景：太阳系</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <h1>AP2 · 三维层级场景：太阳系</h1>
+  <p class="sub">齐次坐标 · 层级模型矩阵 · 透视 / 正交 · 虚拟轨迹球</p>
+</header>
+
+<div class="layout">
+  <div id="view-wrap">
+    <canvas id="view"></canvas>
+    <div class="vignette" aria-hidden="true"></div>
+    <div class="grain" aria-hidden="true"></div>
+    <div id="labels" aria-hidden="true"></div>
+  </div>
+
+  <form id="controls" autocomplete="off">
+    <fieldset>
+      <legend>运动参数</legend>
+      <div class="row">
+        <label for="orbitSpeed">公转速度 <span data-for="orbitSpeed"></span></label>
+        <input type="range" id="orbitSpeed" name="orbitSpeed" min="0" max="8" step="0.05" value="1">
+      </div>
+      <div class="row">
+        <label for="spinSpeed">自转速度 <span data-for="spinSpeed"></span></label>
+        <input type="range" id="spinSpeed" name="spinSpeed" min="0" max="12" step="0.05" value="1">
+      </div>
+      <div class="row">
+        <label for="earthTilt">地球轴倾角 (° ) <span data-for="earthTilt"></span></label>
+        <input type="range" id="earthTilt" name="earthTilt" min="0" max="90" step="0.5" value="23.5">
+      </div>
+      <label><input type="checkbox" id="showOrbits" name="showOrbits" checked> 显示轨道线</label>
+      <label><input type="checkbox" id="showLabels" name="showLabels" checked> 显示天体名称</label>
+      <div class="buttons" style="margin-top:10px">
+        <button type="button" id="btn-sim">暂停时间 <kbd>P</kbd></button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>观察与投影</legend>
+      <div class="buttons">
+        <button type="button" class="primary" id="btn-pause">漫游暂停 <kbd>空格</kbd></button>
+        <button type="button" id="btn-tour">继续漫游 <kbd>C</kbd></button>
+        <button type="button" id="btn-proj">切换投影 <kbd>O</kbd></button>
+      </div>
+      <p class="hint">
+        左键拖拽：虚拟轨迹球接管视角。<br>
+        滚轮：缩放。拖拽与漫游可互相接管。<br>
+        <b>单击天体（或其名称）</b>：相机平滑飞近聚焦；<br>
+        单击空白处：回到全景视角。
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>选做 · 日食 / 月食</legend>
+      <div class="buttons">
+        <button type="button" id="btn-solar">日食视点</button>
+        <button type="button" id="btn-lunar">月食视点</button>
+      </div>
+      <p class="hint">自动对齐日–地–月并切到对应视点；视点内时间冻结、相机跟随天体，可清楚观察遮挡与本影变暗。拖拽或按 C 恢复。</p>
+    </fieldset>
+
+    <p id="status">正在加载纹理…</p>
+  </form>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
+layout(location=0) in vec3 aPosition;
+layout(location=1) in vec3 aNormal;
+layout(location=2) in vec2 aTexCoord;
+
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProj;
+uniform mat4 uNMatrix;
+
+out vec3 vN;
+out vec3 vWorld;
+out vec2 vUv;
+
+void main() {
+  vec4 world = uModel * vec4(aPosition, 1.0);
+  vWorld = world.xyz;
+  vN = mat3(uNMatrix) * aNormal;
+  vUv = aTexCoord;
+  gl_Position = uProj * uView * world;
+  gl_PointSize = 1.6;
+}
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">#version 300 es
+precision highp float;
+
+in vec3 vN;
+in vec3 vWorld;
+in vec2 vUv;
+
+uniform sampler2D uSampler;
+uniform vec3 uLightPos;
+uniform vec3 uCamPos;
+uniform float uEmissive;
+uniform float uAmbient;
+uniform float uShadow;
+uniform vec3 uTint;
+uniform float uUseTexture;
+uniform float uAlphaFromLuma;
+uniform float uAlpha;
+uniform float uGlow;
+
+out vec4 fragColor;
+
+void main() {
+  vec4 tex = texture(uSampler, vUv);
+  vec3 base = mix(uTint, tex.rgb, uUseTexture);
+  vec3 color;
+  if (uEmissive > 0.5) {
+    color = base;
+    if (uGlow > 0.5) {
+      // 边缘光（rim）：法线越垂直视线越亮，用于太阳光晕与聚焦高亮环
+      vec3 V = normalize(uCamPos - vWorld);
+      float rim = 1.0 - abs(dot(normalize(vN), V));
+      color = base * rim * rim;
+    }
+  } else {
+    vec3 L = normalize(uLightPos - vWorld);
+    vec3 N = normalize(vN);
+    float diff = max(dot(N, L), 0.0);
+    color = base * (uAmbient + diff);
+    if (uGlow > 0.5) {
+      vec3 V = normalize(uCamPos - vWorld);
+      float rim = 1.0 - abs(dot(normalize(vN), V));
+      color += uTint * rim * rim * 1.4; // 选中 / 悬停天体的边缘描光
+    }
+  }
+  color *= (1.0 - 0.85 * uShadow);
+  float alpha = uAlpha;
+  if (uAlphaFromLuma > 0.5) {
+    alpha = max(tex.r, max(tex.g, tex.b));
+    if (alpha < 0.04) discard;
+  }
+  fragColor = vec4(color, alpha);
+}
+</script>
+
+<script src="Common/webgl-utils.js"></script>
+<script src="Common/initShaders.js"></script>
+<script src="Common/MV.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

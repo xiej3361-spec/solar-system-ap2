@@ -1,0 +1,22 @@
+status: n/a
+tour pose span: 0.000 -> 10.000 (frames 60)
+
+-- interaction tests --
+PASS projectBody(saturn) 投影有效 — {"x":828.9240629697047,"y":329.2358797109876}
+PASS 全景下名称标签可见数 > 5 — visible=9
+PASS 悬停天体光标变 pointer — {"cursor":"pointer","hover":"saturn"}
+PASS 悬停高亮命中 saturn — {"cursor":"pointer","hover":"saturn"}
+PASS 屏幕点拾取到 saturn — got=saturn
+PASS 点击后相机进入聚焦 — {"mode":"focus","id":"saturn"}
+PASS 找到空白屏幕点 — {"x":68,"y":120}
+PASS 点击空白回到全景 — {"mode":"focus","id":null}
+PASS 暂停时间按钮生效 — {"p":true,"t":"继续时间 P"}
+PASS 点击名称标签聚焦地球 — focus=earth
+TARGET-SITE captured (screenshots/target-site.png + target-site-evidence.json)
+
+-- console (error/warn) --
+[warning] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.
+
+-- page exceptions --
+
+-- log entries (error) --

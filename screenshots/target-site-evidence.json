@@ -1,0 +1,58 @@
+{
+  "title": "HUMAN ARTIFACTS · A Cartography of Humanity in the Solar System",
+  "text": "1P/HALLEY\n哈雷彗星\n67P/CHURYUMOV-GERASIMENKO\n67P 楚留莫夫–格拉西缅科彗星\n2P/ENCKE\n恩克彗星\n81P/WILD 2\n维尔特二号彗星\n人类造物\n\n人类在太阳系留下的\n一份坐标图谱\n\n206 收录对象\n音乐 · 开\n⌂ 主页\n对象全部任务\n天体选择天体\n实时位置示意位置\n视图侧视排列\n中 / EN\n在轨目录\n搜索\n指南\n作者\n背景音乐\n拖动 · 进入三维\n左键拖动 · 平移图谱\n右键拖动 · 展开真实轨道倾角\n滚轮 · 缩放尺度\n知道了\n2026\n206 收录对象\n81 仍在工作\n15 深空探测器\n▶ 回放这段时期\n拖动时间线 · 圆点是发射事件 · 横条是任务跨度\n2024EUROPA CLIPPER\n1960\n1970\n1980\n1990\n2000\n2010\n2020\nASTRONOMICAL VOICES · 天文学思想长廊\n万物的中央，坐着太阳。\n— 哥白尼 · 1543\n出处明确\n音乐 · 开\n2026 年 10 月版\nHUMANARTIFACTS\n\n人类在太阳系留下的\n一份坐标图谱\n\n1957 年以来，人类把一万多个造物送出了大",
+  "canvases": [
+    {
+      "w": 1258,
+      "h": 646
+    },
+    {
+      "w": 1258,
+      "h": 646
+    }
+  ],
+  "hasThree": false,
+  "res": [
+    "solar.css",
+    "solar.js",
+    "inter-300.woff2",
+    "ibm-plex-mono-400.woff2",
+    "ibm-plex-mono-500.woff2",
+    "inter-400.woff2",
+    "earth-catalog.json",
+    "album.json",
+    "favicon.ico",
+    "callisto.jpg",
+    "url?id=1355146597.mp3",
+    "charon.jpg",
+    "dione.jpg",
+    "enceladus.jpg",
+    "europa.jpg",
+    "ganymede.jpg",
+    "io.jpg",
+    "mimas.jpg",
+    "phoebe.jpg",
+    "rhea.jpg",
+    "tethys.jpg",
+    "titan.jpg",
+    "triton.jpg",
+    "earth_clouds_nasa-2k.jpg",
+    "earth_daymap-2k.jpg",
+    "earth_nightmap-2k.jpg",
+    "jupiter-2k.jpg",
+    "mars-2k.jpg",
+    "sun_halpha-2k.jpg",
+    "sun_photosphere-2k.jpg",
+    "sun_equirect-2k.jpg",
+    "mercury-2k.jpg",
+    "venus_atmosphere-2k.jpg",
+    "saturn-ring-2k.png",
+    "saturn-2k.jpg",
+    "uranus-2k.jpg",
+    "neptune-2k.jpg",
+    "pluto-2k.jpg",
+    "moon-2k.jpg",
+    "live-orbits.js",
+    "venus_surface-2k.jpg"
+  ]
+}
